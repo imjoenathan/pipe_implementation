@@ -18,6 +18,13 @@ process	main(void)
 
 	netstart();
 
+	ppid32 pipe = popen("w");
+	pclose(pipe);
+	pipe = popen("r");
+	pclose(pipe);
+	pipe = popen("w");
+	pclose(pipe);
+	
 	kprintf("\n...creating a shell\n");
 	recvclr();
 	resume(create(shell, 8192, 50, "shell", 1, CONSOLE));
@@ -30,5 +37,6 @@ process	main(void)
 		kprintf("\n\nMain process recreating shell\n\n");
 		resume(create(shell, 4096, 20, "shell", 1, CONSOLE));
 	}
+
 	return OK;
 }

@@ -18,6 +18,7 @@ extern	void meminit(void);	/* Initializes the free memory list	*/
 /* Declarations of major kernel variables */
 
 struct	procent	proctab[NPROC];	/* Process table			*/
+struct	pipent	piptab[NPIPE];	/* Pipe table				*/
 struct	sentry	semtab[NSEM];	/* Semaphore table			*/
 struct	memblk	memlist;	/* List of free memory blocks		*/
 
@@ -25,6 +26,7 @@ struct	memblk	memlist;	/* List of free memory blocks		*/
 
 int	prcount;		/* Total number of live processes	*/
 pid32	currpid;		/* ID of currently executing process	*/
+ppid32	nextpipid;		/* ID of next pipe in pipe table	*/
 
 /*------------------------------------------------------------------------
  * nulluser - initialize the system and become the null process
@@ -134,6 +136,13 @@ static	void	sysinit()
 		prptr->prstkbase = NULL;
 		prptr->prprio = 0;
 	}
+
+	/* Initialize pipe table entries free	*/
+
+	for (i = 0; i < NPIPE; i++) {
+		piptab[i].pipstate = PIP_FREE;
+	}
+	nextpipid = 0;
 
 	/* Initialize the Null process entry */	
 
