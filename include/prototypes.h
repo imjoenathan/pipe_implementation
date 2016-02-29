@@ -330,6 +330,13 @@ extern	int32	pci_init(void);
 extern	void	pdump(struct netpacket *);
 extern	void	pdumph(struct netpacket *);
 
+/* in file pipe.c */
+extern	ppid32	popen(const char *);
+extern	syscall	pjoin(ppid32);
+extern	syscall	pclose(ppid32);
+extern	syscall	pread(ppid32, void*, uint32);
+extern	syscall	pwrite(ppid32, void*, uint32);
+
 /* in file platinit.c */
 extern	void	platinit(void);
 

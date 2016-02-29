@@ -17,16 +17,22 @@ ppid32 popen (const char * mode) {
 			nextpipid = 0;
 		}
 
+		int i;
+
 		newpipe = &piptab[pipnum];
 		
 		if (newpipe->pipstate == PIP_FREE) {
 			newpipe->pipstate = PIP_ONE;
-			newpipe->wsem = semcreate(PIPESIZE);
-			newpipe->rsem = semcreate(0);
+			newpipe->wsem = semcreate(0);
+			newpipe->rsem = semcreate(1);
 			newpipe->ownerpid = getpid();
 			newpipe->writedex = 0;
 			newpipe->readdex = 0;
-			
+
+			for (i = 0; i < PIPESIZE; i++) {
+				newpipe->buffer[i] = NULL;
+			}
+
 			/* Handle creator permission as read or write	*/
 			if (!strcmp(mode, "r")) {
 				newpipe->ownmode = R_MODE;
@@ -35,7 +41,6 @@ ppid32 popen (const char * mode) {
 				newpipe->ownmode = W_MODE;
 				newpipe->wend = getpid();
 			} else {
-				kprintf("Argument not supported for pipe creation\n");
 				return SYSERR;
 			}
 
@@ -54,7 +59,6 @@ syscall	pjoin (ppid32 pipeid) {
 	mask = disable();
 
 	if (isabadppid(pipeid)) {
-		kprintf("Bad ppid\n");
 		return SYSERR;
 	}
 	
@@ -62,7 +66,6 @@ syscall	pjoin (ppid32 pipeid) {
 	pipe = &piptab[pipeid];
 	
 	if (pipe->pipstate != PIP_ONE) {
-		kprintf("Pipe is either free or currently in use\n");
 		return SYSERR;
 	}
 
@@ -83,6 +86,9 @@ syscall	pjoin (ppid32 pipeid) {
 
 syscall pclose (ppid32 pipeid) {
 
+	int mask;
+	mask = disable();
+
 	if (isabadppid(pipeid)) {
 		kprintf("Bad pipe ID\n");
 		return SYSERR;
@@ -96,7 +102,7 @@ syscall pclose (ppid32 pipeid) {
 		
 		case (PIP_FREE):
 
-			kprintf("Pipe is currently free\n");
+			restore(mask);
 			return SYSERR;
 			
 		case (PIP_ONE):
@@ -114,33 +120,240 @@ syscall pclose (ppid32 pipeid) {
 				pipe->wend = NULL;
 				pipe->pipstate = PIP_FREE;
 				pipe->ownmode = NULL;
+				restore(mask);
 				return OK;
 			}
 
-			kprintf("Calling process cannot close this pipe\n");
+			restore(mask);
 			return SYSERR;
 
 		case (PIP_CON):
 
 			/* Check if calling process is reader or writer	*/
 			if (pipe->rend == getpid()) {
-				
+
 				pid32 wr = pipe->wend;
-								
+
+				pipe->rend = NULL;
+				pipe->pipstate = PIP_USED;
+
+				if (isbadpid(wr)) {
+					restore(mask);
+					return SYSERR;
+				}
+
+				struct procent * writ;
+				writ  = &proctab[wr];
+
+				/* Check if write end is blocked, if yes then wake	*/
+				if (writ->prstate == PR_SUSP) {
+					ready(wr);
+				}
+				restore(mask);
+				return OK;	
 
 			} else if (pipe->wend == getpid()) {
-				//Handle case when writer calls close
+				
+				pid32 rd = pipe->rend;
+
+				pipe->wend = NULL;
+				pipe->pipstate = PIP_USED;
+
+				if (isbadpid(rd)) {
+					restore(mask);
+					return SYSERR;
+				}
+				struct procent * read;
+				read = &proctab[rd];
+				
+				/* Check if read end is blocked, if yes then wake	*/
+				if (read->prstate == PR_SUSP) {
+					ready(rd);
+				}
+				restore(mask);
+				return OK;
+
 			} else {
-				kprintf("Calling process is neither the reader nor writer!\n");
+				restore(mask);
 				return SYSERR;
 			}
 		
 		case (PIP_USED):
 			
+			/* Pipe has already been closed on one end, free the pipe	*/
+			
+			if (pipe->rend == NULL) {
+				if (pipe->wend != getpid()) {
+					restore(mask);
+					return SYSERR;
+				}
+			} else if (pipe->wend == NULL) {
+				if (pipe->rend != getpid()) {
+					restore(mask);
+					return SYSERR;
+				}
+			} else {
+				restore(mask);
+				return SYSERR;
+			}
+
+			semdelete (pipe->wsem);
+			semdelete (pipe->rsem);
+			pipe->ownerpid = NULL;
+			pipe->buffer[0] = NULL;
+			pipe->writedex = 0;
+			pipe->readdex = 0;
+			pipe->rend = NULL;
+			pipe->wend = NULL;
+			pipe->pipstate = PIP_FREE;
+			pipe->ownmode = NULL;
+			restore(mask);
+			return OK;
 
 		default:
 			break;
 	}
-
+	
+	restore(mask);
 	return SYSERR;
+}
+
+
+syscall pread(ppid32 pipeid, void * buf, uint32 len) {
+
+	int mask;
+	mask = disable();
+	
+	struct pipent * pipe;
+
+	if (isabadppid(pipeid)) {
+		restore(mask);
+		return SYSERR;
+	}
+	
+	pipe = &piptab[pipeid];
+	
+	if (pipe->pipstate != PIP_CON && pipe->pipstate != PIP_USED) {
+		restore(mask);
+		return SYSERR;
+	}
+
+	if (pipe->rend != getpid()) {
+		restore(mask);
+		return SYSERR;
+	}
+
+	int bufferSize = strlen(pipe->buffer);
+	int rdex = pipe->readdex;
+	
+	int charRemain = bufferSize - rdex;	/* Char remaining in buffer	*/
+
+	/* If nothing in buffer to read and write end is closed, return SYSERR	*/
+	if (charRemain == -1 && pipe->wend == NULL) {
+		restore(mask);
+		return SYSERR;
+	}
+
+	/* If buffer empty but write end open, suspend until write calls ready	*/
+	if (charRemain == 0 && pipe->wend != NULL) {
+		wait(pipe->wsem);
+	}
+
+	wait(pipe->rsem);
+
+	/* Suspend the writer while we read from buffer				*/
+	if (pipe->wend != NULL) {
+		suspend(pipe->wend);
+	}
+	
+	int chRead = 0;
+	char * buff = buf;
+
+	/* Read all bytes in the buffer						*/
+	while (chRead < len) {
+				
+		buff[chRead] = pipe->buffer[pipe->readdex]; 
+		chRead++;
+		pipe->readdex++;
+
+		if (pipe->readdex == PIPESIZE) {
+			pipe->readdex = 0;
+			break;
+		}
+
+	}
+	buf = buff;
+
+	signal(pipe->rsem);
+
+	if (pipe->wend != NULL) {
+		ready(pipe->wend);
+	}
+
+
+	restore(mask);
+	return chRead;
+}
+
+
+syscall pwrite (ppid32 pipeid, void * buf, uint32 len) {
+
+	int mask;
+	mask = disable();
+
+	if (isabadppid(pipeid)) {
+		restore(mask);
+		return SYSERR;
+	}
+
+	struct pipent * pipe;
+	pipe = &piptab[pipeid];
+
+	if (pipe->pipstate != PIP_CON) {
+		restore(mask);
+		return SYSERR;
+	}
+
+	if (pipe->wend != getpid()) {
+		restore(mask);
+		return SYSERR;
+	}
+
+	if (pipe->rend == NULL) {
+		restore(mask);
+		return SYSERR;
+	}
+
+	char * buff;
+	int chWritten = 0;
+
+	wait(pipe->rsem);
+
+	buff = buf;
+	
+	while (chWritten < len) {
+		if (pipe->rend == NULL) {
+			restore(mask);
+			return SYSERR;
+		}
+
+		pipe->buffer[pipe->writedex] = buff[chWritten];
+		chWritten++;
+		pipe->writedex++;
+
+		if (pipe->writedex == PIPESIZE) {			
+			ready(pipe->rend);
+			pipe->writedex = 0;
+			suspend(getpid());
+		}
+	}
+
+	if (semcount(pipe->wsem) == -1) {
+			signal(pipe->wsem);
+	}
+
+	signal(pipe->rsem);
+
+	restore(mask);
+	return chWritten;
 }
