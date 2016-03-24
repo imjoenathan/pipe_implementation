@@ -36,6 +36,8 @@ process test3(ppid32 pipe) {
   memset(&d, 0, 10); 
   pread(pipe, &d, 9);
 
+	kprintf("Test 3 string read is: %s\n", d);
+
   if ( (strcmp(b, "tst31t") == 0) && (strcmp(c, "st32tst33t") == 0) 
     && (strcmp(d, "st34tst35") == 0)) 
     kprintf("test 3 passed\n"); 

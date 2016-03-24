@@ -149,6 +149,9 @@ syscall pclose (ppid32 pipeid) {
 				if (writ->prstate == PR_SUSP) {
 					ready(wr);
 				}
+				if (writ->prstate == PR_WAIT) {
+					signal(pipe->wsem);
+				}
 				restore(mask);
 				return OK;	
 
@@ -169,6 +172,9 @@ syscall pclose (ppid32 pipeid) {
 				/* Check if read end is blocked, if yes then wake	*/
 				if (read->prstate == PR_SUSP) {
 					ready(rd);
+				}
+				if (read->prstate == PR_WAIT) {
+					signal(pipe->wsem);
 				}
 				restore(mask);
 				return OK;
@@ -261,11 +267,10 @@ syscall pread(ppid32 pipeid, void * buf, uint32 len) {
 
 	wait(pipe->rsem);
 
-	/* Suspend the writer while we read from buffer				*/
 	if (pipe->wend != NULL) {
 		suspend(pipe->wend);
 	}
-	
+
 	int chRead = 0;
 	char * buff = buf;
 
@@ -284,12 +289,11 @@ syscall pread(ppid32 pipeid, void * buf, uint32 len) {
 	}
 	buf = buff;
 
-	signal(pipe->rsem);
-
 	if (pipe->wend != NULL) {
 		ready(pipe->wend);
 	}
 
+	signal(pipe->rsem);
 
 	restore(mask);
 	return chRead;

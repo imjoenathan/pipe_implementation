@@ -31,6 +31,14 @@ syscall	kill(
 	}
 	freestk(prptr->prstkbase, prptr->prstklen);
 
+	struct pipent * pipe;
+	for (i=0; i < NPIPE; i++) {
+		pipe = &piptab[i];
+		if (pipe->rend == getpid() || pipe->wend == getpid()) {
+			pclose(i);
+		}
+	}
+
 	switch (prptr->prstate) {
 	case PR_CURR:
 		prptr->prstate = PR_FREE;	/* Suicide */
